@@ -1,6 +1,10 @@
+import { Keypair } from '@stellar/stellar-sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   bearer,
+  createClient,
+  createTreasury,
+  createVendor,
   createResource,
   createTreasury,
   orgWithAllRoles,
@@ -8,6 +12,7 @@ import {
   type Harness,
 } from './harness.js';
 
+const VENDOR_ADDRESS = Keypair.random().publicKey();
 const invoiceBody = (clientId: string, treasuryAccountId: string) => ({
   clientId,
   treasuryAccountId,
@@ -25,6 +30,7 @@ describe('cross-org access', () => {
   let a: Awaited<ReturnType<typeof orgWithAllRoles>>;
   let b: Awaited<ReturnType<typeof orgWithAllRoles>>;
   /** Resources owned by org B. */
+  const bIds = {} as { treasury: string; client: string; vendor: string };
   const bIds = {} as { treasury: string; client: string; invoice: string };
   let aTreasury: string;
   let aClient: string;
@@ -34,6 +40,8 @@ describe('cross-org access', () => {
     a = await orgWithAllRoles(h.app);
     b = await orgWithAllRoles(h.app);
     bIds.treasury = (await createTreasury(h.app, b.org.id, b.users.owner.token)).id;
+    bIds.client = (await createClient(h.app, b.org.id, b.users.owner.token)).id;
+    bIds.vendor = (await createVendor(h.app, b.org.id, b.users.owner.token)).id;
     aTreasury = (await createTreasury(h.app, a.org.id, a.users.owner.token)).id;
     const client = (organizationId: string) =>
       h.db.prisma.client.create({ data: { organizationId, name: 'C' } }).then((c) => c.id);
@@ -64,6 +72,28 @@ describe('cross-org access', () => {
         payload: { role: 'admin' },
       },
       { method: 'DELETE', url: `/v1/orgs/${b.org.id}/members/${b.memberIds.viewer}` },
+      { method: 'GET', url: `/v1/orgs/${b.org.id}/clients` },
+      { method: 'GET', url: `/v1/orgs/${b.org.id}/clients/${bIds.client}` },
+      { method: 'POST', url: `/v1/orgs/${b.org.id}/clients`, payload: { name: 'pwned' } },
+      {
+        method: 'PATCH',
+        url: `/v1/orgs/${b.org.id}/clients/${bIds.client}`,
+        payload: { name: 'pwned' },
+      },
+      { method: 'DELETE', url: `/v1/orgs/${b.org.id}/clients/${bIds.client}` },
+      { method: 'GET', url: `/v1/orgs/${b.org.id}/vendors` },
+      { method: 'GET', url: `/v1/orgs/${b.org.id}/vendors/${bIds.vendor}` },
+      {
+        method: 'POST',
+        url: `/v1/orgs/${b.org.id}/vendors`,
+        payload: { name: 'pwned', stellarAddress: VENDOR_ADDRESS },
+      },
+      {
+        method: 'PATCH',
+        url: `/v1/orgs/${b.org.id}/vendors/${bIds.vendor}`,
+        payload: { name: 'pwned' },
+      },
+      { method: 'DELETE', url: `/v1/orgs/${b.org.id}/vendors/${bIds.vendor}` },
       { method: 'GET', url: `/v1/orgs/${b.org.id}/invoices` },
       {
         method: 'POST',
@@ -103,6 +133,29 @@ describe('cross-org access', () => {
     }
   });
 
+  it("cannot reach another org's clients or vendors through its own org id", async () => {
+    const token = bearer(a.users.owner.token);
+    for (const [resource, id] of [
+      ['clients', bIds.client],
+      ['vendors', bIds.vendor],
+    ] as const) {
+      const own = `/v1/orgs/${a.org.id}/${resource}/${id}`;
+      for (const res of await Promise.all([
+        h.app.inject({ method: 'GET', url: own, headers: token }),
+        h.app.inject({ method: 'PATCH', url: own, headers: token, payload: { name: 'pwned' } }),
+        h.app.inject({ method: 'DELETE', url: own, headers: token }),
+      ])) {
+        expect(res.statusCode, `${resource}`).toBe(404);
+      }
+    }
+    expect(await h.db.prisma.client.count({ where: { organizationId: b.org.id } })).toBe(1);
+    expect(await h.db.prisma.vendor.count({ where: { organizationId: b.org.id } })).toBe(1);
+    const list = await h.app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${a.org.id}/clients`,
+      headers: token,
+    });
+    expect(list.json().items).toEqual([]);
   it("cannot reach another org's invoice through its own org id", async () => {
     const own = `/v1/orgs/${a.org.id}/invoices/${bIds.invoice}`;
     const token = bearer(a.users.owner.token);
