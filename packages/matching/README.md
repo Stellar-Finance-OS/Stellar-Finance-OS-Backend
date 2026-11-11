@@ -18,11 +18,11 @@ Pure payment → invoice matching engine: `(transaction, openInvoices, clientHis
 5. Reference found but asset code **or** issuer differ → `flagged: wrong_asset` (with `invoiceId`; never matched).
 6. No reference → `suggested` candidates (never `matched`). Same asset is required; score is
    exact outstanding amount (0.5) + sender in client's `knownAddresses` (0.3) + `createdAt` within
-   `dateWindowDays` (default 14) of `dueDate` (0.2). Candidates need at least one signal, are sorted
-   by score desc, capped at 5; none → `unmatched`.
+   `suggestionWindowDays` (default 14) of `dueDate` (0.2). Candidates need at least one signal, are sorted
+   by score desc, capped at `maxSuggestions` (default 5); none → `unmatched`.
 
 **Amounts:** `matched` carries `appliedAmount` (credited, capped at the balance), `remaining`, and
 `newStatus` (`partially_paid` | `paid`). **Overpayments are applied *and* flagged:** the result stays
-`matched` (invoice → `paid`) and adds `overpaidBy` = excess; the caller should surface it for review.
+`matched` (invoice → `paid`) with `overpaidBy` = excess (`"0.0000000"` when there is none); the caller should surface it for review.
 
 All math uses `@finance-os/shared` stroop-exact helpers; no `Number`/`parseFloat`. No clock reads.

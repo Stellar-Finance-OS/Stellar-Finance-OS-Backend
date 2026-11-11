@@ -6,7 +6,6 @@ import {
   createTreasury,
   createVendor,
   createResource,
-  createTreasury,
   orgWithAllRoles,
   startHarness,
   type Harness,
@@ -30,8 +29,7 @@ describe('cross-org access', () => {
   let a: Awaited<ReturnType<typeof orgWithAllRoles>>;
   let b: Awaited<ReturnType<typeof orgWithAllRoles>>;
   /** Resources owned by org B. */
-  const bIds = {} as { treasury: string; client: string; vendor: string };
-  const bIds = {} as { treasury: string; client: string; invoice: string };
+  const bIds = {} as { treasury: string; client: string; vendor: string; invoice: string };
   let aTreasury: string;
   let aClient: string;
 
@@ -43,10 +41,7 @@ describe('cross-org access', () => {
     bIds.client = (await createClient(h.app, b.org.id, b.users.owner.token)).id;
     bIds.vendor = (await createVendor(h.app, b.org.id, b.users.owner.token)).id;
     aTreasury = (await createTreasury(h.app, a.org.id, a.users.owner.token)).id;
-    const client = (organizationId: string) =>
-      h.db.prisma.client.create({ data: { organizationId, name: 'C' } }).then((c) => c.id);
-    bIds.client = await client(b.org.id);
-    aClient = await client(a.org.id);
+    aClient = (await createClient(h.app, a.org.id, a.users.owner.token)).id;
     bIds.invoice = (
       await createResource(h.app, `/v1/orgs/${b.org.id}/invoices`, b.users.owner.token, {
         ...invoiceBody(bIds.client, bIds.treasury),
@@ -155,7 +150,10 @@ describe('cross-org access', () => {
       url: `/v1/orgs/${a.org.id}/clients`,
       headers: token,
     });
-    expect(list.json().items).toEqual([]);
+    // Org A sees only its own client, never org B's.
+    expect(list.json().items.map((c: { id: string }) => c.id)).toEqual([aClient]);
+  });
+
   it("cannot reach another org's invoice through its own org id", async () => {
     const own = `/v1/orgs/${a.org.id}/invoices/${bIds.invoice}`;
     const token = bearer(a.users.owner.token);
